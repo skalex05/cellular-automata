@@ -1,102 +1,192 @@
-import pygame,time, random , math, copy
+import pygame
+from pygame.math import Vector2
+import time
 
-screensize = (500,500)
-
-boardsize = (100,100)
-
-board = []
-for y in range(boardsize[1]):
-    row = []
-    for x in range(boardsize[0]):
-        row.append(0)
-    board.append(row)
-
-cellsize = (int(screensize[0] / boardsize[0]),int(screensize[1] / boardsize[1]))
+from Settings import settings
 
 pygame.init()
-screen = pygame.display.set_mode(screensize)
 
-generationSpeed = 0.01
-fps = 60
+clock = pygame.Clock()
 
-lastFrame = time.time()
-lastGeneration = time.time()
+screen = pygame.display.set_mode(settings.screen_size, pygame.RESIZABLE)
 
-def clamp(x,y):
-    if x >= boardsize[0]:
-        x -= boardsize[0]
-    elif x < 0:
-        x = boardsize[0] + x
-    if y >= boardsize[1]:
-        y -= boardsize[1]
-    elif y < 0:
-        y = boardsize[1] + y
-    return x,y
+cells = set()
+frontier = set()
 
 
+def add_cells_to_frontier(x, y):
+    if settings.symmetrical_area:
+        neighbours = settings.neighbour_area
+    else:
+        neighbours = settings.neighbour_area + [(-nx, -ny) for nx, ny in settings.neighbour_area]
+    for nx, ny in neighbours:
+        nx += x
+        ny += y
+        if (nx, ny) in cells:
+            frontier.add((nx, ny))
+    frontier.add((x, y))
 
-def GetNeighbours(x,y,Board):
+
+def check_empty(old_cells: set, x: int, y: int):
     count = 0
-    for yoffset in range(-1,2):
-        for xoffset in range(-1,2):
-            tx,ty = x - xoffset,y - yoffset
-            tx,ty = clamp(tx,ty)
-            if (tx,ty) != (x,y):
-                count += board[ty][tx]
-    return count
+    for nx, ny in settings.neighbour_area:
+        nx += x
+        ny += y
+        if nx < 0 or nx >= settings.grid_size.x or ny < 0 or ny >= settings.grid_size.y:
+            continue
+        count += (nx, ny) in old_cells
 
-paused = False
+    if settings.birth_condition(count):
+        cells.add((x, y))
+        add_cells_to_frontier(x, y)
 
-while True:
-    #events
+
+def check_cell(old_cells: set, x: int, y: int):
+    global cells, frontier
+
+    count = 0
+    for nx, ny in settings.neighbour_area:
+        nx += x
+        ny += y
+        if nx < 0 or nx >= settings.grid_size.x or ny < 0 or ny >= settings.grid_size.y:
+            continue
+        count += (nx, ny) in old_cells
+
+        if settings.symmetrical_area and (nx, ny) not in cells:
+            check_empty(old_cells, nx, ny)
+
+    if not settings.live_condition(count):
+        cells.remove((x, y))
+        add_cells_to_frontier(x, y)
+
+    if not settings.symmetrical_area:
+        for nx, ny in [(-nx, -ny) for nx, ny in settings.neighbour_area]:
+            nx += x
+            ny += y
+            if nx < 0 or nx >= settings.grid_size.x or ny < 0 or ny >= settings.grid_size.y:
+                continue
+            check_empty(old_cells, nx, ny)
+
+
+def update_cells():
+    global frontier
+    old_cells = cells.copy()
+    old_frontier = frontier.copy()
+    frontier = set()
+    for x, y in old_frontier:
+        if (x, y) in old_cells:
+            check_cell(old_cells, x, y)
+        else:
+            check_empty(old_cells, x, y)
+
+
+cam_moving = False
+cam_move_start = None
+cam_pos_on_move_start = None
+screen_update = True
+
+while 1:
+    ft = time.time()
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
+            pygame.quit()
             exit()
         if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_p:
-                lastGeneration = time.time()
-                paused = not paused
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_r:
-                board = []
-                for y in range(boardsize[1]):
-                    row = []
-                    for x in range(boardsize[0]):
-                        row.append(0)
-                    board.append(row)
-    if pygame.mouse.get_pressed()[0]:
-        pos = pygame.mouse.get_pos()
-        pos = (pos[0] / screensize[0],pos[1] / screensize[1])
-        pos = (int(boardsize[0] * pos[0]),int(boardsize[1] * pos[1]))
-        board[pos[1]][pos[0]] = 1
-        lastGeneration = time.time()
-    elif pygame.mouse.get_pressed()[2]:
-        pos = pygame.mouse.get_pos()
-        pos = (pos[0] / screensize[0],pos[1] / screensize[1])
-        pos = (int(boardsize[0] * pos[0]),int(boardsize[1] * pos[1]))
-        board[pos[1]][pos[0]] = 0
-        lastGeneration = time.time()
-
-    #fps limiter
-    if time.time() - lastFrame < 1/fps: continue
-    #generations
-    if time.time() - lastGeneration > generationSpeed and not paused:
-        newBoard = copy.deepcopy(board)
-        for y in range(0,boardsize[1]):
-            for x in range(0,boardsize[0]):
-                n = GetNeighbours(x,y,board)
-                if n == 3 or (n == 2 and board[y][x] == 1):
-                    newBoard[y][x] = 1
+            if event.key == pygame.K_ESCAPE and settings.fullscreen:
+                screen = pygame.display.set_mode(settings.screen_size, pygame.RESIZABLE)
+                settings.fullscreen = False
+            if event.key == pygame.K_F11:
+                if settings.fullscreen:
+                    screen = pygame.display.set_mode(settings.screen_size, pygame.RESIZABLE)
                 else:
-                    newBoard[y][x] = 0
-        board = newBoard
-        lastGeneration = time.time()
-    #render
-    for y in range(boardsize[1]):
-        for x in range(boardsize[0]):
-            if board[y][x]:
-                pygame.draw.rect(screen,(142,219,87),(cellsize[0] * x,cellsize[1] * y,cellsize[0],cellsize[1]))
-            else:
-                pygame.draw.rect(screen,(114,111,95),(cellsize[0] * x,cellsize[1] * y,cellsize[0],cellsize[1]))
-    pygame.display.flip()
-    lastFrame = time.time()
+                    screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+                    screen_update = True
+                    size_x, size_y = screen.get_size()
+                    settings.screen_size = Vector2(size_x, size_y)
+                settings.fullscreen = not settings.fullscreen
+        if event.type == pygame.WINDOWRESIZED:
+            settings.screen_size = Vector2(event.x, event.y)
+            screen_update = True
+        if event.type == pygame.MOUSEWHEEL:
+            try:
+                mouse_pos = Vector2(pygame.mouse.get_pos())
+                old_cursor_pos = mouse_pos / settings.cell_size
+                settings.cell_size *= 2 ** event.y
+                new_cursor_pos = mouse_pos / settings.cell_size
+                dif = old_cursor_pos - new_cursor_pos
+                settings.camera_position = settings.camera_position + dif
+                if not cam_moving:
+                    settings.camera_position = Vector2(int(settings.camera_position.x), int(settings.camera_position.y))
+                screen_update = True
+            except ValueError:
+                pass
+
+    mouse_states = pygame.mouse.get_pressed()
+
+    mouse_pos = Vector2(pygame.mouse.get_pos())
+
+    if mouse_states[1]:
+        screen_update = True
+        if not cam_moving:
+            cam_moving = True
+            cam_move_start = pygame.mouse.get_pos()
+            cam_pos_on_move_start = settings.camera_position
+
+        mouse_movement = mouse_pos - cam_move_start
+        mouse_movement = Vector2(mouse_movement) / settings.cell_size
+
+        settings.camera_position = cam_pos_on_move_start - mouse_movement
+    elif cam_moving:
+        screen_update = True
+        cam_moving = False
+        settings.camera_position = Vector2(int(settings.camera_position.x), int(settings.camera_position.y))
+
+    cursor_pos = settings.camera_position + mouse_pos / settings.cell_size
+    cursor_pos = Vector2(int(cursor_pos.x), int(cursor_pos.y))
+    if mouse_states[0]:
+        cells.add(tuple(cursor_pos))
+        add_cells_to_frontier(cursor_pos.x, cursor_pos.y)
+    elif mouse_states[2]:
+        cell = tuple(cursor_pos)
+        if cell in cells:
+            cells.remove(cell)
+            add_cells_to_frontier(*cell)
+    else:
+        update_cells()
+    st = time.time()
+
+    draw_bound_x = (settings.camera_position.x - 1, settings.camera_far_pos.x)
+    draw_bound_y = (settings.camera_position.y - 1, settings.camera_far_pos.y)
+
+    if screen_update:
+        screen.fill(settings.bg_color)
+        screen_update = False
+
+        for x, y in cells:
+
+            if (x < draw_bound_x[0] or x > draw_bound_x[1]
+                    or y < draw_bound_y[0] or y > draw_bound_y[1]):
+                continue
+
+            pygame.draw.rect(screen, settings.cell_color,
+                             ((x - settings.camera_position.x) * settings.cell_size,
+                              (y - settings.camera_position.y) * settings.cell_size,
+                              settings.cell_size, settings.cell_size))
+    else:
+        for x, y in frontier:
+            if (x < draw_bound_x[0] or x > draw_bound_x[1]
+                                       or y < draw_bound_y[0] or y > draw_bound_y[1]):
+                continue
+            col = settings.cell_color
+            if (x, y) not in cells:
+                col = settings.bg_color
+            pygame.draw.rect(screen, col,
+                             ((x - settings.camera_position.x) * settings.cell_size,
+                              (y - settings.camera_position.y) * settings.cell_size,
+                              settings.cell_size, settings.cell_size))
+
+    pygame.display.update()
+    t = time.time()
+    print(f"draw: {t - st:.4f}", f"frame: {t - ft:.4f}")
+
+    clock.tick(settings.speed)
